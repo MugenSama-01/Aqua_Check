@@ -3,7 +3,6 @@ import {
   ShieldCheck, 
   HelpCircle, 
   Droplet, 
-  AlertCircle, 
   RefreshCw, 
   Sparkles, 
   FileCheck,
@@ -13,6 +12,7 @@ import {
 import { HydroStation, AdvisoryResponse } from '../types';
 import { calculateWellDepth } from '../data/tripuraData';
 import { useLanguage } from '../context/LanguageContext';
+import { generateHydrogeologicalAdvisory } from '../utils/advisoryGenerator';
 
 interface PreDrillingAdvisoryProps {
   station: HydroStation | null;
@@ -22,7 +22,6 @@ export const PreDrillingAdvisory: React.FC<PreDrillingAdvisoryProps> = ({ statio
   const { t, language, formatNum } = useLanguage();
   const [advisory, setAdvisory] = useState<AdvisoryResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
 
   // Fetch advisory whenever selected station or language changes
   useEffect(() => {
@@ -31,7 +30,6 @@ export const PreDrillingAdvisory: React.FC<PreDrillingAdvisoryProps> = ({ statio
     let isMounted = true;
     async function fetchAdvisory() {
       setLoading(true);
-      setError(null);
       try {
         const response = await fetch('/api/advisory', {
           method: 'POST',
@@ -39,22 +37,23 @@ export const PreDrillingAdvisory: React.FC<PreDrillingAdvisoryProps> = ({ statio
           body: JSON.stringify({ station, lang: language }),
         });
 
-        if (!response.ok) {
-          throw new Error(`Server returned HTTP ${response.status}`);
+        if (response.ok) {
+          const data: AdvisoryResponse = await response.json();
+          if (isMounted) {
+            setAdvisory(data);
+            setLoading(false);
+            return;
+          }
         }
+      } catch {
+        // Fallback smoothly without alerting user on static hosts
+      }
 
-        const data: AdvisoryResponse = await response.json();
-        if (isMounted) {
-          setAdvisory(data);
-        }
-      } catch (err: any) {
-        if (isMounted) {
-          setError(err.message || 'Unable to connect to advisory service');
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+      // Seamless fallback to deterministic CGWB hydrogeological calculations
+      if (isMounted) {
+        const localAdvisory = generateHydrogeologicalAdvisory(station, language);
+        setAdvisory(localAdvisory);
+        setLoading(false);
       }
     }
 
@@ -68,21 +67,24 @@ export const PreDrillingAdvisory: React.FC<PreDrillingAdvisoryProps> = ({ statio
   const handleRefresh = async () => {
     if (!station) return;
     setLoading(true);
-    setError(null);
     try {
       const response = await fetch('/api/advisory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ station, lang: language }),
       });
-      if (!response.ok) throw new Error('Advisory request failed');
-      const data = await response.json();
-      setAdvisory(data);
-    } catch (err: any) {
-      setError(err.message || 'Advisory update failed');
-    } finally {
-      setLoading(false);
+      if (response.ok) {
+        const data = await response.json();
+        setAdvisory(data);
+        setLoading(false);
+        return;
+      }
+    } catch {
+      // ignore
     }
+    const localAdvisory = generateHydrogeologicalAdvisory(station, language);
+    setAdvisory(localAdvisory);
+    setLoading(false);
   };
 
   if (!station) return null;
@@ -135,17 +137,6 @@ export const PreDrillingAdvisory: React.FC<PreDrillingAdvisoryProps> = ({ statio
             <div className="h-28 bg-slate-100 dark:bg-slate-800 rounded"></div>
           </div>
           <div className="h-12 bg-slate-100 dark:bg-slate-800 rounded"></div>
-        </div>
-      )}
-
-      {/* Error state */}
-      {error && !loading && (
-        <div className="p-4 rounded bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2.5">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <div>
-            <div className="font-semibold">Notice regarding live analysis:</div>
-            <div>{error}. Default deterministic Tripura hydrogeological rules remain active.</div>
-          </div>
         </div>
       )}
 
